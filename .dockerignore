@@ -1,0 +1,10 @@
+.git
+.env
+.agents
+GUIDELINES
+ARTIFACTS
+*.md
+__pycache__
+*.pyc
+*.pyo
+node_modules
