@@ -1,0 +1,7 @@
+- [x] Create `requirements-dev.txt`
+- [x] Create `tests/` directory
+- [x] Create `tests/conftest.py` with Vertex AI mocks
+- [x] Create `tests/test_api.py` with core, edge, and negative cases
+- [x] Create `scripts/run_tests.sh`
+- [x] Update `README.md` with Testing section
+- [x] Verify tests run successfully

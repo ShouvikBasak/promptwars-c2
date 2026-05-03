@@ -71,6 +71,25 @@ A single-column conversational interface that answers questions about:
 
 ---
 
+## Testing
+
+The project includes a comprehensive backend test suite (`pytest`) covering:
+- **Unit & Logic**: PII schema guarantees and intent classification handling.
+- **Integration**: Full `/api/chat` flow with session history.
+- **Negative & Edge Cases**: Handling of empty inputs, long strings, and malformed LLM responses.
+
+**Vertex AI is mocked**: No GCP credentials or network access are required to run tests. The suite is fully deterministic and suitable for CI/CD environments.
+- **CI/CD**: Tests are automatically executed via GitHub Actions on every push.
+- **Coverage**: A detailed XML coverage report is generated (`coverage.xml`) for external auditing and integration.
+
+### Run tests
+Execute the single-command script to install dependencies and run the suite with coverage (generates `coverage.xml` and enforces a coverage threshold):
+```bash
+./scripts/run_tests.sh
+```
+
+---
+
 ## Project Structure
 
 ```text

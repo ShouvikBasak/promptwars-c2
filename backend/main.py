@@ -43,47 +43,51 @@ REFUSAL_MESSAGE = "This information is not available in official Election Commis
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    # --- Step 1: Intent Classification ---
-    intent_response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=request.message,
-        config=GenerateContentConfig(
-            system_instruction=INTENT_CLASSIFIER_PROMPT,
-            response_mime_type="application/json",
-            max_output_tokens=256,
-        )
-    )
     try:
-        text = intent_response.text.strip().removeprefix("```json").removesuffix("```").strip()
-        intent_data = json.loads(text)
+        # --- Step 1: Intent Classification ---
+        intent_response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=request.message,
+            config=GenerateContentConfig(
+                system_instruction=INTENT_CLASSIFIER_PROMPT,
+                response_mime_type="application/json",
+                max_output_tokens=256,
+            )
+        )
+        try:
+            text = intent_response.text.strip().removeprefix("```json").removesuffix("```").strip()
+            intent_data = json.loads(text)
+        except Exception:
+            # Safe default: refuse on parse failure
+            intent_data = {"action": "REFUSE"}
+
+        # --- Step 2: Deterministic refusal gate ---
+        if intent_data.get("action") != "ANSWER":
+            return {"response": REFUSAL_MESSAGE}
+
+        # --- Step 3: Answer Generation with session context ---
+        # Convert generic history dicts to google-genai Content objects
+        history_contents = []
+        for turn in request.history[-10:]:  # Max 5 pairs (10 messages)
+            role = turn.get("role", "user")
+            parts = turn.get("parts", [])
+            text_parts = [Part(text=p.get("text", "")) for p in parts if p.get("text")]
+            if text_parts:
+                history_contents.append(Content(role=role, parts=text_parts))
+
+        chat_session = client.chats.create(
+            model=MODEL_NAME,
+            config=GenerateContentConfig(
+                system_instruction=f"{SYSTEM_PROMPT}\n\n{ANSWER_GENERATOR_PROMPT}",
+            ),
+            history=history_contents,
+        )
+
+        answer_response = chat_session.send_message(request.message)
+        return {"response": answer_response.text}
     except Exception:
-        # Safe default: refuse on parse failure
-        intent_data = {"action": "REFUSE"}
-
-    # --- Step 2: Deterministic refusal gate ---
-    if intent_data.get("action") != "ANSWER":
+        # Catch-all for resilience: never leak stack traces, always refuse on error
         return {"response": REFUSAL_MESSAGE}
-
-    # --- Step 3: Answer Generation with session context ---
-    # Convert generic history dicts to google-genai Content objects
-    history_contents = []
-    for turn in request.history[-10:]:  # Max 5 pairs (10 messages)
-        role = turn.get("role", "user")
-        parts = turn.get("parts", [])
-        text_parts = [Part(text=p.get("text", "")) for p in parts if p.get("text")]
-        if text_parts:
-            history_contents.append(Content(role=role, parts=text_parts))
-
-    chat_session = client.chats.create(
-        model=MODEL_NAME,
-        config=GenerateContentConfig(
-            system_instruction=f"{SYSTEM_PROMPT}\n\n{ANSWER_GENERATOR_PROMPT}",
-        ),
-        history=history_contents,
-    )
-
-    answer_response = chat_session.send_message(request.message)
-    return {"response": answer_response.text}
 
 # Serve frontend — mounted last so /api/* routes take precedence
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
