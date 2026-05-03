@@ -1,0 +1,17 @@
+{
+    "evm": {
+        "title": "Electronic Voting Machine (EVM)",
+        "description": "A device used to electronically record and count votes in elections. It consists of a Balloting Unit and a Control Unit.",
+        "link": "https://www.eci.gov.in/evm-vvpat/"
+    },
+    "vvpat": {
+        "title": "Voter Verifiable Paper Audit Trail (VVPAT)",
+        "description": "An independent system connected with the EVM that allows voters to verify that their votes are cast as intended.",
+        "link": "https://www.eci.gov.in/evm-vvpat/"
+    },
+    "voter_registration": {
+        "title": "Voter Registration",
+        "description": "Every citizen of India who is 18 years or older on the qualifying date is eligible to be registered as a voter.",
+        "link": "https://voters.eci.gov.in/"
+    }
+}

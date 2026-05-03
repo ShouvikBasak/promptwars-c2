@@ -141,6 +141,20 @@ The following Google services are intentionally and meaningfully used:
   - Vertex AI (Gemini model access)
 - Enforces least-privilege access
 - No public exposure of secrets
+### 5. Google Cloud Logging
+- Provides structured JSON logging for real-time observability.
+- Enables audit trails and latency tracking without PII leakage.
+
+### 6. Google Cloud Monitoring
+- Monitors system health via the `/health` endpoint and log-based metrics.
+
+### 7. Google Cloud Error Reporting
+- Automatically captures and aggregates server-side exceptions for rapid triage.
+
+### 8. Google Cloud Firestore
+- Used as a **read-only reference layer** for static civic education data.
+- Stores non-PII content like election glossary terms and official links.
+- Operates with a local JSON fallback to ensure high availability.
 
 These services are **core to the architecture**, not add-ons.
 
@@ -238,15 +252,23 @@ Required IAM role:
 
 ---
 
-## 12. Observability (Minimal)
+## 12. Observability
 
-For MVP:
-- Basic request and error logging
-- No user-level analytics
-- No behavioural tracking
-- No personally identifiable telemetry
+ElectEd India uses production-grade observability via Google Cloud native services:
 
-Observability exists only to ensure system health.
+### Structured Logging
+- **Service**: Google Cloud Logging
+- **Format**: JSON written to `stdout`.
+- **Payload**: Includes `request_id`, `method`, `path`, `status_code`, and `latency_ms`.
+- **Privacy**: User messages and bodies are strictly excluded from logs to prevent PII leakage.
+
+### Health Monitoring
+- **Endpoint**: `/health`
+- **Purpose**: Used by Cloud Run and Cloud Monitoring to verify service availability and readiness.
+
+### Error Tracking
+- **Service**: Google Cloud Error Reporting
+- **Implementation**: Global exception handlers log full tracebacks in a format recognized by Error Reporting, ensuring no stack traces leak to the end user.
 
 ---
 
@@ -270,6 +292,7 @@ ElectEd India’s architecture is:
 - Built using **Google Antigravity**
 - Hosted on **Google Cloud Run**
 - Powered by **Gemini**
+- Enhanced with **Cloud Firestore** for static reference data
 - Governed by strict safety and scope rules
 - Stateless, minimal, and auditable
 - Designed for inclusive access across devices

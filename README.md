@@ -32,8 +32,22 @@ A single-column conversational interface that answers questions about:
 
 - **Frontend**: A zero-build React application styled with Tailwind CSS, focused on accessibility and mobile responsiveness.
 - **Backend**: A stateless FastAPI (Python) orchestrator that manages session context and Vertex AI integration.
-- **LLM**: Powered by **Gemini 2.5 Flash** on Google Cloud Vertex AI.
+- **LLM**: Powered by **Gemini 2.5 Flash** on Google Cloud Vertex AI, enhanced with **Cloud Firestore** for static reference data.
 - **Deployment**: Containerized with Docker and hosted on **Google Cloud Run** using production-grade IAM security.
+
+---
+
+## Google Cloud Services
+
+ElectEd India is built natively on Google Cloud to ensure scalability, security, and observability:
+
+- **Google Cloud Run**: Serverless compute platform used to host the stateless backend orchestrator.
+- **Vertex AI (Gemini 2.5 Flash)**: Advanced LLM used for intent classification and grounded educational answer generation.
+- **Cloud Logging**: Structured JSON logging for real-time observability and log analysis.
+- **Cloud Monitoring**: Health checks and performance metrics derived from structured logs.
+- **Error Reporting**: Automatic capture and alerting for unhandled server-side exceptions.
+- **Cloud Firestore**: Serverless NoSQL database used as a read-only reference layer for static civic education content (glossary, FAQs).
+- **Cloud IAM**: Fine-grained access control for service-to-service communication.
 
 ---
 
@@ -86,19 +100,6 @@ The project includes a comprehensive backend test suite (`pytest`) covering:
 Execute the single-command script to install dependencies and run the suite with coverage (generates `coverage.xml` and enforces a coverage threshold):
 ```bash
 ./scripts/run_tests.sh
-```
-
----
-
-## Project Structure
-
-```text
-├── ARTIFACTS/          # Deployment and Walkthrough documentation
-├── PROMPTS/            # System prompts for Intent, Answer, and Safety
-├── backend/            # FastAPI application logic
-├── frontend/           # React UI (HTML/JSX)
-├── Dockerfile          # Container configuration
-└── requirements.txt    # Python dependencies
 ```
 
 ---

@@ -3,8 +3,9 @@
 # Exit on error
 set -e
 
-echo "--- Installing Test Dependencies ---"
-# Ensure we have the latest dev dependencies
+echo "--- Installing Dependencies ---"
+# Ensure we have all production and dev dependencies
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 echo "--- Running Backend Tests with Coverage ---"
