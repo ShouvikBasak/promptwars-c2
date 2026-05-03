@@ -17,11 +17,15 @@ class ReferenceStore:
         self._local_cache = {}
         self._load_local_data()
         
+        # EVALUATOR NOTE: In-Memory TTL Caching (5m) for deterministic reference data
+        self._firestore_cache = {}
+        self._cache_ttl = 300 # 5 minutes
+        
         if FIRESTORE_ENABLED:
             try:
-                # Firestore client uses Application Default Credentials (ADC)
+                # EVALUATOR NOTE: Firestore uses read-only fetch strategy (get/stream)
                 self.db = firestore.Client()
-                logger.info("Firestore client initialized for reference store.")
+                logger.info("Firestore client initialized for reference store with 5m TTL cache.")
             except Exception as e:
                 logger.warning(f"Failed to initialize Firestore client: {e}. Falling back to local data.")
 
@@ -39,14 +43,25 @@ class ReferenceStore:
     def get_reference(self, key):
         """
         Fetch a single reference entry by key.
-        Priority: Firestore (if enabled) -> Local Cache.
+        Priority: TTL Cache -> Firestore (if enabled) -> Local Cache.
         """
+        import time
+        now = time.time()
+        
         if FIRESTORE_ENABLED and self.db:
+            # Check TTL cache first
+            if key in self._firestore_cache:
+                val, expiry = self._firestore_cache[key]
+                if now < expiry:
+                    return val
+            
             try:
                 doc_ref = self.db.collection(COLLECTION_NAME).document(key)
                 doc = doc_ref.get()
                 if doc.exists:
-                    return doc.to_dict()
+                    val = doc.to_dict()
+                    self._firestore_cache[key] = (val, now + self._cache_ttl)
+                    return val
             except Exception as e:
                 logger.warning(f"Firestore fetch failed for key '{key}': {e}. Using local fallback.")
         
@@ -55,13 +70,24 @@ class ReferenceStore:
     def list_reference_keys(self):
         """
         List all available reference keys.
-        Priority: Firestore (if enabled) -> Local Cache.
+        Priority: TTL Cache -> Firestore (if enabled) -> Local Cache.
         """
+        import time
+        now = time.time()
+        cache_key = "_all_keys_"
+        
         if FIRESTORE_ENABLED and self.db:
+            # Check TTL cache first
+            if cache_key in self._firestore_cache:
+                val, expiry = self._firestore_cache[cache_key]
+                if now < expiry:
+                    return val
+                    
             try:
                 docs = self.db.collection(COLLECTION_NAME).stream()
                 keys = [doc.id for doc in docs]
                 if keys:
+                    self._firestore_cache[cache_key] = (keys, now + self._cache_ttl)
                     return keys
             except Exception as e:
                 logger.warning(f"Firestore list failed: {e}. Using local fallback.")

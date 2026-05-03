@@ -99,44 +99,17 @@ def test_firestore_init_error():
         store = ReferenceStore()
         assert store.db is None
 
-def test_firestore_fetch_error(api_client):
+def test_http_exception_in_route(api_client):
     """
-    Verify local fallback when Firestore fetch raises an exception.
+    Trigger an HTTPException inside the route to cover the re-raise logic.
     """
-    from backend.main import store
-    mock_db = MagicMock()
-    # Mock collection to raise error
-    mock_db.collection.side_effect = Exception("Fetch Error")
-    
-    original_db = store.db
-    try:
-        with patch("backend.reference_store.FIRESTORE_ENABLED", True):
-            store.db = mock_db
-            # Should fall back to local "evm" entry
-            response = api_client.get("/api/reference?key=evm")
-            assert response.status_code == 200
-            assert response.json()["title"] == "Electronic Voting Machine (EVM)"
-    finally:
-        store.db = original_db
-
-def test_firestore_list_error(api_client):
-    """
-    Verify local fallback when Firestore listing raises an exception.
-    """
-    from backend.main import store
-    mock_db = MagicMock()
-    mock_db.collection.side_effect = Exception("List Error")
-    
-    original_db = store.db
-    try:
-        with patch("backend.reference_store.FIRESTORE_ENABLED", True):
-            store.db = mock_db
-            # Should fall back to local keys
-            response = api_client.get("/api/reference")
-            assert response.status_code == 200
-            assert "evm" in response.json()["keys"]
-    finally:
-        store.db = original_db
+    from fastapi import HTTPException
+    with patch("backend.main.run_chat_logic", side_effect=HTTPException(status_code=400, detail="Bad request")):
+        response = api_client.post("/api/chat", json={
+            "message": "hello",
+            "history": []
+        })
+        assert response.status_code == 400
 
 def test_firestore_init_success():
     """
@@ -169,3 +142,141 @@ def test_firestore_list_keys_success():
         store = ReferenceStore()
         keys = store.list_reference_keys()
         assert "fire_key" in keys
+
+def test_request_size_limit(api_client):
+    """
+    Verify that requests exceeding 100KB are rejected with 413.
+    """
+    large_message = "a" * 101_000
+    payload = json.dumps({"message": large_message, "history": []})
+    response = api_client.post("/api/chat", 
+        content=payload,
+        headers={
+            "Content-Length": str(len(payload)),
+            "Content-Type": "application/json"
+        }
+    )
+    assert response.status_code == 413
+    assert "too large" in response.json()["detail"].lower()
+
+def test_soft_timeout_handling(api_client):
+    """
+    Verify that soft timeout (25s) returns a safe refusal.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+    
+    # Mock run_chat_logic to be an async function
+    with patch("backend.main.run_chat_logic", new_callable=AsyncMock) as mock_logic:
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+            response = api_client.post("/api/chat", json={
+                "message": "hello",
+                "history": []
+            })
+            assert response.status_code == 200
+            assert "This information is not available" in response.json()["response"]
+
+def test_firestore_list_keys_cache_hit():
+    """
+    Verify cache hit in list_reference_keys.
+    """
+    from backend.reference_store import ReferenceStore
+    mock_db = MagicMock()
+    # First call will populate cache
+    mock_doc = MagicMock()
+    mock_doc.id = "key1"
+    mock_db.collection.return_value.stream.return_value = [mock_doc]
+    
+    with patch("google.cloud.firestore.Client", return_value=mock_db), \
+         patch("backend.reference_store.FIRESTORE_ENABLED", True):
+        store = ReferenceStore()
+        keys1 = store.list_reference_keys()
+        assert keys1 == ["key1"]
+        
+        # Second call should not hit mock_db again
+        mock_db.collection.return_value.stream.reset_mock()
+        keys2 = store.list_reference_keys()
+        assert keys2 == ["key1"]
+        assert not mock_db.collection.return_value.stream.called
+
+def test_firestore_fetch_cache_hit():
+    """
+    Verify cache hit in get_reference.
+    """
+    from backend.reference_store import ReferenceStore
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"val": 1}
+    mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+    
+    with patch("google.cloud.firestore.Client", return_value=mock_db), \
+         patch("backend.reference_store.FIRESTORE_ENABLED", True):
+        store = ReferenceStore()
+        val1 = store.get_reference("k1")
+        assert val1 == {"val": 1}
+        
+        # Second call should not hit mock_db again
+        mock_db.collection.return_value.document.reset_mock()
+        val2 = store.get_reference("k1")
+        assert val2 == {"val": 1}
+        assert not mock_db.collection.return_value.document.called
+
+def test_resilience_catch_all_coverage(api_client):
+    """
+    Trigger the Resilience catch-all in the chat endpoint for coverage.
+    """
+    with patch("backend.main.run_chat_logic", side_effect=RuntimeError("Extreme failure")):
+        response = api_client.post("/api/chat", json={
+            "message": "hello",
+            "history": []
+        })
+        assert response.status_code == 200
+        assert "This information is not available" in response.json()["response"]
+
+def test_firestore_fetch_error_logging():
+    """
+    Verify fallback and logging when Firestore fetch fails.
+    """
+    from backend.reference_store import store
+    mock_db = MagicMock()
+    # Mock collection().document().get() to raise an exception
+    mock_db.collection.return_value.document.return_value.get.side_effect = Exception("Fetch error")
+    
+    original_db = store.db
+    store.db = mock_db
+    try:
+        with patch("backend.reference_store.FIRESTORE_ENABLED", True), \
+             patch("backend.reference_store.logger.warning") as mock_warn:
+            # Force cache miss
+            store._firestore_cache.clear()
+            val = store.get_reference("evm")
+            assert val is not None # Falls back to local
+            assert mock_warn.called
+            assert "Firestore fetch failed" in mock_warn.call_args[0][0]
+    finally:
+        store.db = original_db
+
+def test_firestore_list_error_logging():
+    """
+    Verify fallback and logging when Firestore listing fails.
+    """
+    from backend.reference_store import store
+    mock_db = MagicMock()
+    # Mock collection().stream() to raise an exception
+    mock_db.collection.return_value.stream.side_effect = Exception("List error")
+    
+    original_db = store.db
+    store.db = mock_db
+    try:
+        with patch("backend.reference_store.FIRESTORE_ENABLED", True), \
+             patch("backend.reference_store.logger.warning") as mock_warn:
+            # Force cache miss
+            store._firestore_cache.clear()
+            keys = store.list_reference_keys()
+            assert "evm" in keys # Falls back to local
+            assert mock_warn.called
+            assert "Firestore list failed" in mock_warn.call_args[0][0]
+    finally:
+        store.db = original_db
+

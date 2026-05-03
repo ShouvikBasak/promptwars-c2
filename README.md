@@ -1,4 +1,5 @@
 # ElectEd India
+> **STATUS: Codebase is feature-complete and frozen for submission.**
 
 **ElectEd India** is a conversational educational tool designed to provide clear, neutral, and grounded information about the Indian election process. It empowers citizens—especially first-time voters—with reliable knowledge directly from authoritative sources.
 
@@ -48,6 +49,16 @@ ElectEd India is built natively on Google Cloud to ensure scalability, security,
 - **Error Reporting**: Automatic capture and alerting for unhandled server-side exceptions.
 - **Cloud Firestore**: Serverless NoSQL database used as a read-only reference layer for static civic education content (glossary, FAQs).
 - **Cloud IAM**: Fine-grained access control for service-to-service communication.
+
+---
+
+## Efficiency & Cost Controls
+
+ElectEd India is designed for high efficiency and minimal operational cost:
+- **Scale-to-Zero**: Hosted on Google Cloud Run, the backend scales to zero instances when idle, incurring no costs.
+- **In-Memory Caching**: Static reference data is cached in-memory with a 5-minute TTL to reduce Firestore API calls and latency.
+- **Request Guards**: Strict 100KB request size limits and 25s soft timeouts prevent resource exhaustion.
+- **Resource Optimization**: Right-sized for 512MB RAM and 1 vCPU, supporting high concurrency (up to 80 simultaneous requests per instance).
 
 ---
 

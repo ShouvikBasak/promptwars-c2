@@ -156,6 +156,21 @@ The following Google services are intentionally and meaningfully used:
 - Stores non-PII content like election glossary terms and official links.
 - Operates with a local JSON fallback to ensure high availability.
 
+---
+
+## 7. Efficiency & Performance Design
+
+### Execution Guards
+- **Request Size Limit**: Payloads over 100KB are rejected early to prevent OOM or DoS conditions.
+- **Soft Timeouts**: All Gemini calls are wrapped in a 25-second timeout to ensure the orchestrator remains responsive.
+
+### Resource Utilization
+- **Scale-to-Zero**: Native Cloud Run behavior ensures zero idle cost.
+- **Concurrency**: Configured for high concurrency to maximize CPU utilization during request bursts.
+
+### Caching Strategy
+- **Process-Local TTL Cache**: Firestore lookups are cached for 300 seconds to minimize network latency and API costs.
+
 These services are **core to the architecture**, not add-ons.
 
 ---

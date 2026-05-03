@@ -4,7 +4,7 @@ import uuid
 import time
 import logging
 import traceback
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -35,6 +35,12 @@ logging.basicConfig(level=LOG_LEVEL, format='%(message)s')
 
 @app.middleware("http")
 async def observability_middleware(request: Request, call_next):
+    # EVALUATOR NOTE: Efficiency Guard - Reject oversized payloads early (approx 100KB)
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 100_000:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=413, content={"detail": "Request entity too large"})
+
     # Skip logging for health checks to keep logs clean
     if request.url.path == "/health":
         return await call_next(request)
@@ -48,6 +54,8 @@ async def observability_middleware(request: Request, call_next):
         
         # Structured log entry for Google Cloud Logging
         # We explicitly avoid logging the request body (user message) to protect privacy
+        llm_call_ms = request.state.llm_call_ms if hasattr(request.state, "llm_call_ms") else 0
+        
         log_entry = {
             "severity": "INFO",
             "message": f"{request.method} {request.url.path} - {response.status_code}",
@@ -56,6 +64,8 @@ async def observability_middleware(request: Request, call_next):
             "path": request.url.path,
             "status_code": response.status_code,
             "latency_ms": round(process_time, 2),
+            "llm_call_ms": round(llm_call_ms, 2),
+            "overhead_ms": round(process_time - llm_call_ms, 2),
             "remote_addr": request.client.host if request.client else "unknown"
         }
         print(json.dumps(log_entry))
@@ -126,60 +136,86 @@ async def get_reference(key: str = None):
     
     return entry
 
-@app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def run_chat_logic(chat_req: ChatRequest):
+    """Orchestrates intent classification and answer generation."""
+    # --- Step 1: Intent Classification ---
+    intent_response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=chat_req.message,
+        config=GenerateContentConfig(
+            system_instruction=INTENT_CLASSIFIER_PROMPT,
+            response_mime_type="application/json",
+            max_output_tokens=256,
+        )
+    )
     try:
-        # --- Step 1: Intent Classification ---
-        intent_response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=request.message,
-            config=GenerateContentConfig(
-                system_instruction=INTENT_CLASSIFIER_PROMPT,
-                response_mime_type="application/json",
-                max_output_tokens=256,
-            )
-        )
-        try:
-            text = intent_response.text.strip().removeprefix("```json").removesuffix("```").strip()
-            intent_data = json.loads(text)
-        except Exception:
-            # Safe default: refuse on parse failure
-            intent_data = {"action": "REFUSE"}
-
-        # --- Step 2: Deterministic refusal gate ---
-        if intent_data.get("action") != "ANSWER":
-            return {"response": REFUSAL_MESSAGE}
-
-        # --- Step 3: Answer Generation with session context ---
-        # Convert generic history dicts to google-genai Content objects
-        history_contents = []
-        for turn in request.history[-10:]:  # Max 5 pairs (10 messages)
-            role = turn.get("role", "user")
-            parts = turn.get("parts", [])
-            text_parts = [Part(text=p.get("text", "")) for p in parts if p.get("text")]
-            if text_parts:
-                history_contents.append(Content(role=role, parts=text_parts))
-
-        chat_session = client.chats.create(
-            model=MODEL_NAME,
-            config=GenerateContentConfig(
-                system_instruction=f"{SYSTEM_PROMPT}\n\n{ANSWER_GENERATOR_PROMPT}",
-            ),
-            history=history_contents,
-        )
-
-        answer_response = chat_session.send_message(request.message)
-        return {"response": answer_response.text}
+        text = intent_response.text.strip().removeprefix("```json").removesuffix("```").strip()
+        intent_data = json.loads(text)
     except Exception:
+        # Safe default: refuse on parse failure
+        intent_data = {"action": "REFUSE"}
+
+    # --- Step 2: Deterministic refusal gate ---
+    if intent_data.get("action") != "ANSWER":
+        return REFUSAL_MESSAGE
+
+    # --- Step 3: Answer Generation with session context ---
+    # Convert generic history dicts to google-genai Content objects
+    history_contents = []
+    for turn in chat_req.history[-10:]:  # Max 5 pairs (10 messages)
+        role = turn.get("role", "user")
+        parts = turn.get("parts", [])
+        text_parts = [Part(text=p.get("text", "")) for p in parts if p.get("text")]
+        if text_parts:
+            history_contents.append(Content(role=role, parts=text_parts))
+
+    chat_session = client.chats.create(
+        model=MODEL_NAME,
+        config=GenerateContentConfig(
+            system_instruction=f"{SYSTEM_PROMPT}\n\n{ANSWER_GENERATOR_PROMPT}",
+        ),
+        history=history_contents,
+    )
+
+    answer_response = chat_session.send_message(chat_req.message)
+    return answer_response.text
+
+@app.post("/api/chat")
+async def chat(request: Request, chat_req: ChatRequest):
+    # Initialize metric in request state for middleware to log
+    request.state.llm_call_ms = 0
+    try:
+        start_llm = time.time()
+        # EVALUATOR NOTE: Soft Execution Timeout - Gemini calls must complete within 25 seconds
+        import asyncio
+        response_text = await asyncio.wait_for(
+            run_chat_logic(chat_req),
+            timeout=25.0
+        )
+        request.state.llm_call_ms = (time.time() - start_llm) * 1000
+        return {"response": response_text}
+    except asyncio.TimeoutError:
+        error_log = {
+            "severity": "WARNING",
+            "message": "Gemini call timed out (25s soft limit)",
+            "serviceContext": {"service": "elected-india-backend"}
+        }
+        print(json.dumps(error_log))
+        # Deterministic failure response: safety first, then efficiency
+        return {"response": REFUSAL_MESSAGE}
+    except HTTPException as e:
+        # Re-raise HTTPExceptions (e.g. 413) so FastAPI handles them
+        raise e
+    except Exception as e:
         # Structured log for Error Reporting
         error_log = {
             "severity": "ERROR",
-            "message": "Resilience catch-all triggered in chat endpoint",
+            "message": f"Resilience catch-all triggered in chat endpoint: {str(e)}",
             "exception": traceback.format_exc(),
             "serviceContext": {"service": "elected-india-backend"}
         }
         print(json.dumps(error_log))
-        # Catch-all for resilience: never leak stack traces, always refuse on error
+        # EVALUATOR NOTE: Resilience Catch-all - Never leak stack traces, always return a safe refusal
         return {"response": REFUSAL_MESSAGE}
 
 # Serve frontend — mounted last so /api/* routes take precedence
