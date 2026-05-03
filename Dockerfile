@@ -9,7 +9,7 @@ COPY PROMPTS/ ./PROMPTS/
 COPY frontend/ ./frontend/
 
 # Copy backend source and dependencies
-COPY backend/main.py ./backend/main.py
+COPY backend/ ./backend/
 COPY requirements.txt ./requirements.txt
 
 RUN pip install --no-cache-dir -r requirements.txt
